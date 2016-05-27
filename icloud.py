@@ -1,6 +1,6 @@
 """
 homeassistant.components.icloud
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Platform that supports scanning iCloud.
 
 For more details about this platform, please refer to the documentation at
@@ -41,19 +41,21 @@ DEFAULT_INTERVAL = 8
 CONF_EVENTS = 'events'
 DEFAULT_EVENTS = False
 
+CONF_COOKIEDIRECTORY = 'cookiedirectory'
+
 # entity attributes
 ATTR_ACCOUNTNAME = 'accountname'
 ATTR_INTERVAL = 'interval'
 ATTR_DEVICENAME = 'devicename'
 ATTR_BATTERY = 'battery'
 ATTR_DISTANCE = 'distance'
-ATTR_STARTTIME = 'start_time'
-ATTR_ENDTIME = 'end_time'
+ATTR_STARTTIME = 'start time'
+ATTR_ENDTIME = 'end time'
 ATTR_DURATION = 'duration'
-ATTR_REMAINING = 'remaining_time'
-ATTR_DEVICESTATUS = 'device_status'
-ATTR_LOWPOWERMODE = 'low_power_mode'
-ATTR_BATTERYSTATUS = 'battery_status'
+ATTR_REMAINING = 'remaining time'
+ATTR_DEVICESTATUS = 'device status'
+ATTR_LOWPOWERMODE = 'low power mode'
+ATTR_BATTERYSTATUS = 'battery status'
 ATTR_LOCATION = 'location'
 ATTR_FRIENDLY_NAME = 'friendly_name'
 
@@ -86,7 +88,7 @@ DEVICESTATUSSET = ['features', 'maxMsgChar', 'darkWake', 'fmlyShare',
 
 def setup(hass, config):
     """ Set up the iCloud Scanner. """
-    
+
     if config.get(DOMAIN) is None:
         return False
 
@@ -99,24 +101,25 @@ def setup(hass, config):
         if CONF_USERNAME not in account_config:
             _LOGGER.error("Missing username for account %s", account)
             continue
-        
+
         if CONF_PASSWORD not in account_config:
             _LOGGER.error("Missing password for account %s", account)
             continue
-        
+
         # Get the username and password from the configuration
         username = account_config.get(CONF_USERNAME)
         password = account_config.get(CONF_PASSWORD)
-        
+        cookiedirectory = account_config.get(CONF_COOKIEDIRECTORY, None)
+
         ignored_devices = []
         if 'ignored_devices' in account_config:
             ignored_dev = account_config.get('ignored_devices')
             for each_dev in ignored_dev:
                 ignored_devices.append(each_dev)
-        
+
         getevents = account_config.get(CONF_EVENTS, DEFAULT_EVENTS)
-        
-        icloudaccount = Icloud(hass, username, password, account,
+
+        icloudaccount = Icloud(hass, username, password, cookiedirectory, account,
                                ignored_devices, getevents)
         icloudaccount.update_ha_state()
         ICLOUDTRACKERS[account] = icloudaccount
@@ -127,11 +130,11 @@ def setup(hass, config):
                 track_state_change(hass,
                                    'device_tracker.' + devicename,
                                    iclouddevice.devicechanged)
-                                   
+
         if 'manual_update' in account_config:
             def update_now(now):
                 ICLOUDTRACKERS[account].update_icloud(see)
-            
+
             manual_update = account_config.get('manual_update')
             for each_time in manual_update:
                 each_time = dt_util.parse_time(each_time)
@@ -139,13 +142,13 @@ def setup(hass, config):
                                   hour=each_time.hour,
                                   minute=each_time.minute,
                                   second=each_time.second)
-        
+
     if not ICLOUDTRACKERS:
         _LOGGER.error("No ICLOUDTRACKERS added")
         return False
-        
+
     randomseconds = random.randint(10, 59)
-        
+
     def lost_iphone(call):
         """ Calls the lost iphone function if the device is found """
         accountname = call.data.get('accountname')
@@ -155,7 +158,7 @@ def setup(hass, config):
 
     hass.services.register(DOMAIN, 'lost_iphone',
                            lost_iphone)
-                           
+
     def update_icloud(call):
         """ Calls the update function of an icloud account """
         accountname = call.data.get('accountname')
@@ -164,7 +167,7 @@ def setup(hass, config):
             ICLOUDTRACKERS[accountname].update_icloud(see, devicename)
     hass.services.register(DOMAIN,
                            'update_icloud', update_icloud)
-            
+
     def keep_alive(now):
         """ Keeps the api logged in of all account """
         for accountname in ICLOUDTRACKERS:
@@ -173,12 +176,12 @@ def setup(hass, config):
             except ValueError:
                 _LOGGER.info("something went wrong for this account, " +
                              "retrying in a minute")
-            
+
     track_utc_time_change(
         hass, keep_alive,
         second=randomseconds
     )
-    
+
     def setinterval(call):
         """ Calls the update function of an icloud account """
         accountname = call.data.get('accountname')
@@ -210,16 +213,16 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
         self._devicestatus = None
         self._lowPowerMode = None
         self._batteryStatus = None
-        
+
         self.entity_id = generate_entity_id(
             ENTITY_ID_FORMAT_DEVICE, self.devicename,
             hass=self.hass)
-        
+
     @property
     def state(self):
         """ returns the state of the icloud tracker """
         return self._interval
-        
+
     @property
     def unit_of_measurement(self):
         """ Unit of measurement of this entity """
@@ -236,12 +239,12 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
             ATTR_LOWPOWERMODE: self._lowPowerMode,
             ATTR_BATTERYSTATUS: self._batteryStatus
         }
-        
+
     @property
     def icon(self):
         """Return the icon to use for device if any."""
         return 'mdi:cellphone-iphone'
-        
+
     def keep_alive(self):
         """ Keeps the api alive """
         currentminutes = dt_util.now().hour * 60 + dt_util.now().minute
@@ -269,7 +272,7 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
         return True
 
     def update_icloud(self, see):
-        """ Authenticate against iCloud and scan for devices. """        
+        """ Authenticate against iCloud and scan for devices. """
         if self.api is not None:
             from pyicloud.exceptions import PyiCloudNoDevicesException
 
@@ -306,12 +309,12 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
                     )
             except PyiCloudNoDevicesException:
                 _LOGGER.error('No iCloud Devices found!')
-                
+
     def get_default_interval(self):
         devid = 'device_tracker.' + self.devicename
         devicestate = self.hass.states.get(devid)
         self.devicechanged(self.devicename, None, devicestate)
-                
+
     def setinterval(self, interval=None):
         if interval is not None:
             devid = 'device_tracker.' + self.devicename
@@ -322,11 +325,11 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
             self.get_default_interval()
         self.update_ha_state()
         update_icloud(see)
-      
+
     def devicechanged(self, entity, old_state, new_state):
         if entity is None:
             return
-            
+
         self._distance = None
         if 'latitude' in new_state.attributes:
             device_state_lat = new_state.attributes['latitude']
@@ -339,13 +342,13 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
             self._distance = round(self._distance / 1000, 1)
         if 'battery' in new_state.attributes:
             self._battery = new_state.attributes['battery']
-            
+
         if new_state.state == self._overridestate:
             self.update_ha_state()
             return
-            
+
         self._overridestate = None
-        
+
         if new_state.state != 'not_home':
             self._interval = 30
             self.update_ha_state()
@@ -387,16 +390,16 @@ class IEvent(Entity):  # pylint: disable=too-many-instance-attributes
         self._location = None
         self._type = type
         self._tz = None
-        
+
         self.entity_id = generate_entity_id(
             ENTITY_ID_FORMAT_EVENT, self.eventguid,
             hass=self.hass)
-        
+
     @property
     def state(self):
         """ returns the state of the icloud tracker """
         return self._title
-        
+
     @property
     def state_attributes(self):
         """ returns the friendlyname of the icloud tracker """
@@ -408,7 +411,7 @@ class IEvent(Entity):  # pylint: disable=too-many-instance-attributes
             ATTR_LOCATION: self._location,
             ATTR_FRIENDLY_NAME: self._type
         }
-        
+
     @property
     def icon(self):
         """Return the icon to use for device if any."""
@@ -416,7 +419,7 @@ class IEvent(Entity):  # pylint: disable=too-many-instance-attributes
             return 'mdi:calendar'
         elif self._type == TYPE_NEXT:
             return 'mdi:calendar-clock'
-        
+
     def keep_alive(self, starttime, endtime, duration, title, tz, location):
         """ Keeps the api alive """
         current = self._type == TYPE_CURRENT
@@ -427,7 +430,7 @@ class IEvent(Entity):  # pylint: disable=too-many-instance-attributes
             self._tz = pytz.utc
         else:
             self._tz = tz
-        
+
         if starttime is None:
             self._starttime = None
             self._starttext = None
@@ -481,19 +484,19 @@ class IEvent(Entity):  # pylint: disable=too-many-instance-attributes
         if (current or nextev) and title is None:
             self._title = 'Free'
         self._location = location
-        
+
         tempdays = floor(self._remaining / 1440)
         temphours = floor((self._remaining % 1440) / 60)
         tempminutes = floor(self._remaining % 60)
         self._remainingtext = (str(tempdays) + "d " +
                                str(temphours) + "h " +
                                str(tempminutes) + "m")
-        
+
         if self._remaining <= 0:
             self.hass.states.remove(self.entity_id)
         else:
             self.update_ha_state()
-    
+
     def check_alive(self):
         """ Keeps the api alive """
         current = self._type == TYPE_CURRENT
@@ -534,7 +537,7 @@ class IEvent(Entity):  # pylint: disable=too-many-instance-attributes
                     remainingseconds = 86400 + remainingseconds
                 self._remaining = (remainingdays * 1440 +
                                    round(remainingseconds / 60, 0))
-                                   
+
         tempdays = floor(self._remaining / 1440)
         temphours = floor((self._remaining % 1440) / 60)
         tempminutes = floor(self._remaining % 60)
@@ -549,12 +552,13 @@ class IEvent(Entity):  # pylint: disable=too-many-instance-attributes
 
 class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
     """ Represents a Proximity in Home Assistant. """
-    def __init__(self, hass, username, password, name, ignored_devices,
+    def __init__(self, hass, username, password, cookiedirectory, name, ignored_devices,
                  getevents):
         # pylint: disable=too-many-arguments
         self.hass = hass
         self.username = username
         self.password = password
+        self.cookiedirectory = cookiedirectory
         self.accountname = name
         self._max_wait_seconds = 120
         self._request_interval_seconds = 10
@@ -567,7 +571,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
         self.nextevents = {}
         self._ignored_devices = ignored_devices
         self._ignored_identifiers = {}
-        
+
         self.entity_id = generate_entity_id(
             ENTITY_ID_FORMAT_ICLOUD, self.accountname,
             hass=self.hass)
@@ -579,6 +583,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                 # Attempt the login to iCloud
                 self.api = PyiCloudService(self.username,
                                            self.password,
+                                           cookie_directory=self.cookiedirectory,
                                            verify=True)
                 for device in self.api.devices:
                     status = device.status(DEVICESTATUSSET)
@@ -591,7 +596,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                         self.devices[devicename] = idevice
                     elif devicename in self._ignored_devices:
                         self._ignored_identifiers[devicename] = device
-                    
+
                 if self.getevents:
                     from_dt = dt_util.now()
                     to_dt = from_dt + timedelta(days=7)
@@ -622,11 +627,11 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                         duration = event['duration']
                         title = event['title']
                         location = event['location']
-                        
+
                         strnow = tempnow.strftime("%Y%m%d%H%M%S")
                         strstart = startdate.strftime("%Y%m%d%H%M%S")
                         strend = enddate.strftime("%Y%m%d%H%M%S")
-                        
+
                         if strnow > strstart and strend > strnow:
                             ievent = IEvent(self.hass, self, guid,
                                             TYPE_CURRENT)
@@ -646,7 +651,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                         tz = pytz.utc
                         location = None
                         guid = None
-                    
+
                     starttime = None
                     endtime = None
                     duration = None
@@ -675,11 +680,11 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                         duration = event['duration']
                         title = event['title']
                         location = event['location']
-                        
+
                         strnow = tempnow.strftime("%Y%m%d%H%M%S")
                         strstart = startdate.strftime("%Y%m%d%H%M%S")
                         strend = enddate.strftime("%Y%m%d%H%M%S")
-                        
+
                         if strnow < strstart:
                             ievent = IEvent(self.hass, self, guid,
                                             TYPE_NEXT)
@@ -691,7 +696,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                                                              title,
                                                              tz,
                                                              location)
-                        
+
             except PyiCloudFailedLoginException as error:
                 _LOGGER.error('Error logging into iCloud Service: %s',
                               error)
@@ -707,12 +712,12 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
         return {
             ATTR_ACCOUNTNAME: self.accountname
         }
-        
+
     @property
     def icon(self):
         """Return the icon to use for device if any."""
         return 'mdi:account'
-        
+
     def keep_alive(self):
         """ Keeps the api alive """
         if self.api is None:
@@ -720,13 +725,14 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                 # Attempt the login to iCloud
                 self.api = PyiCloudService(self.username,
                                            self.password,
+                                           cookie_directory=self.cookiedirectory,
                                            verify=True)
-                        
+
             except PyiCloudFailedLoginException as error:
                 _LOGGER.error('Error logging into iCloud Service: %s',
                               error)
-        
-        
+
+
         if self.api is not None:
             self.api.authenticate()
             for devicename in self.devices:
@@ -761,11 +767,11 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                     duration = event['duration']
                     title = event['title']
                     location = event['location']
-                        
+
                     strnow = tempnow.strftime("%Y%m%d%H%M%S")
                     strstart = startdate.strftime("%Y%m%d%H%M%S")
                     strend = enddate.strftime("%Y%m%d%H%M%S")
-                        
+
                     if strnow > strstart and strend > strnow:
                         if guid not in self.currentevents:
                             ievent = IEvent(self.hass, self, guid,
@@ -785,7 +791,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                     tz = pytz.utc
                     location = None
                     guid = None
-                    
+
                 for addedevent in self.currentevents:
                     found = False
                     eventguid = self.currentevents[addedevent].eventguid
@@ -800,7 +806,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                         del self.currentevents[addedevent]
                     else:
                         self.currentevents[addedevent].check_alive()
-                
+
                 starttime = None
                 endtime = None
                 duration = None
@@ -829,11 +835,11 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                     duration = event['duration']
                     title = event['title']
                     location = event['location']
-                        
+
                     strnow = tempnow.strftime("%Y%m%d%H%M%S")
                     strstart = startdate.strftime("%Y%m%d%H%M%S")
                     strend = enddate.strftime("%Y%m%d%H%M%S")
-                        
+
                     if strnow < strstart:
                         if guid not in self.nextevents:
                             ievent = IEvent(self.hass, self, guid,
@@ -893,10 +899,10 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                 else:
                     for device in self.devices:
                         self.devices[device].update_icloud(see)
-                
+
             except PyiCloudNoDevicesException:
                 _LOGGER.error('No iCloud Devices found!')
-                
+
     def setinterval(self, interval=None, devicename=None):
         if devicename is None:
             for device in self.devices:
