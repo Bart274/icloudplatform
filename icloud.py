@@ -873,13 +873,13 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
             self.api.authenticate()
             if devicename is not None:
                 if devicename in self.devices:
-                    self.devices[devicename].play_sound()
+                    self.devices[devicename].lost_iphone()
                 else:
                     _LOGGER.error("devicename %s unknown for account %s",
                                   devicename, self.accountname)
             else:
                 for device in self.devices:
-                    self.devices[device].play_sound()
+                    self.devices[device].lost_iphone()
 
     def update_icloud(self, see, devicename=None):
         """ Authenticate against iCloud and scan for devices. """
