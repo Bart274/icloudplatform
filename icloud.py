@@ -153,7 +153,10 @@ def setup(hass, config):
         """ Calls the lost iphone function if the device is found """
         accountname = call.data.get('accountname')
         devicename = call.data.get('devicename')
-        if accountname in ICLOUDTRACKERS:
+        if accountname is None:
+            for account in ICLOUDTRACKERS:
+                ICLOUDTRACKERS[account].lost_iphone(devicename)
+        elif accountname in ICLOUDTRACKERS:
             ICLOUDTRACKERS[accountname].lost_iphone(devicename)
 
     hass.services.register(DOMAIN, 'lost_iphone',
@@ -163,7 +166,10 @@ def setup(hass, config):
         """ Calls the update function of an icloud account """
         accountname = call.data.get('accountname')
         devicename = call.data.get('devicename')
-        if accountname in ICLOUDTRACKERS:
+        if accountname is None:
+            for account in ICLOUDTRACKERS:
+                ICLOUDTRACKERS[account].update_icloud(see, devicename)
+        elif accountname in ICLOUDTRACKERS:
             ICLOUDTRACKERS[accountname].update_icloud(see, devicename)
     hass.services.register(DOMAIN,
                            'update_icloud', update_icloud)
@@ -186,8 +192,12 @@ def setup(hass, config):
         """ Calls the update function of an icloud account """
         accountname = call.data.get('accountname')
         interval = call.data.get('interval')
-        if accountname in ICLOUDTRACKERS:
-            ICLOUDTRACKERS[accountname].setinterval(interval)
+        devicename = call.data.get('devicename')
+        if accountname is None:
+            for account in ICLOUDTRACKERS:
+                ICLOUDTRACKERS[account].setinterval(interval, devicename)
+        elif accountname in ICLOUDTRACKERS:
+            ICLOUDTRACKERS[accountname].setinterval(interval, devicename)
 
     hass.services.register(DOMAIN,
                            'setinterval', setinterval)
@@ -906,8 +916,8 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
     def setinterval(self, interval=None, devicename=None):
         if devicename is None:
             for device in self.devices:
-                device.setinterval(interval)
-                device.update_icloud(see)
+                self.devices[device].setinterval(interval)
+                self.devices[device].update_icloud(see)
         elif devicename in self.devices:
             self.devices[devicename] = setinterval(interval)
             self.devices[devicename].update_icloud(see)
