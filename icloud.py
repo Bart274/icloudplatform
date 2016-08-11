@@ -323,18 +323,20 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
     def get_default_interval(self):
         devid = 'device_tracker.' + self.devicename
         devicestate = self.hass.states.get(devid)
+        self._overridestate = None
         self.devicechanged(self.devicename, None, devicestate)
 
     def setinterval(self, interval=None):
         if interval is not None:
             devid = 'device_tracker.' + self.devicename
             devicestate = self.hass.states.get(devid)
-            self._overridestate = devicestate.state
+            if devicestate is not None:
+                self._overridestate = devicestate.state
             self._interval = interval
         else:
             self.get_default_interval()
         self.update_ha_state()
-        update_icloud(see)
+        self.update_icloud(see)
 
     def devicechanged(self, entity, old_state, new_state):
         if entity is None:
@@ -367,7 +369,7 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
                 self.update_ha_state()
                 return
             if self._distance > 100:
-                self._interval = round((self._distance / 60), 0)
+                self._interval = round(self._distance, 0)
             elif self._distance > 50:
                 self._interval = 30
             elif self._distance > 25:
