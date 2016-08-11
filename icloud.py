@@ -921,5 +921,5 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                 self.devices[device].setinterval(interval)
                 self.devices[device].update_icloud(see)
         elif devicename in self.devices:
-            self.devices[devicename] = setinterval(interval)
+            self.devices[devicename].setinterval(interval)
             self.devices[devicename].update_icloud(see)
