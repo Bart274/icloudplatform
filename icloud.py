@@ -118,9 +118,15 @@ def setup(hass, config):
                 ignored_devices.append(each_dev)
 
         getevents = account_config.get(CONF_EVENTS, DEFAULT_EVENTS)
+        
+        googletraveltime = {}
+        if 'googletraveltime' in account_config:
+            for google, googleconfig in account_config.get('googletraveltime').items():
+                googletraveltime[account] = googleconfig
+        _LOGGER.info("ICLOUD: account %s googletraveltime %s", account, googletraveltime)
 
         icloudaccount = Icloud(hass, username, password, cookiedirectory, account,
-                               ignored_devices, getevents)
+                               ignored_devices, getevents, googletraveltime)
         icloudaccount.update_ha_state()
         ICLOUDTRACKERS[account] = icloudaccount
         if ICLOUDTRACKERS[account].api is not None:
@@ -207,7 +213,7 @@ def setup(hass, config):
 
 class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
     """ Represents a Proximity in Home Assistant. """
-    def __init__(self, hass, icloudobject, name, identifier):
+    def __init__(self, hass, icloudobject, name, identifier, googletraveltime):
         # pylint: disable=too-many-arguments
         self.hass = hass
         self.icloudobject = icloudobject
@@ -223,6 +229,7 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
         self._devicestatus = None
         self._lowPowerMode = None
         self._batteryStatus = None
+        self._googletraveltime = googletraveltime
 
         self.entity_id = generate_entity_id(
             ENTITY_ID_FORMAT_DEVICE, self.devicename,
@@ -247,7 +254,8 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
             ATTR_DISTANCE: self._distance,
             ATTR_DEVICESTATUS: self._devicestatus,
             ATTR_LOWPOWERMODE: self._lowPowerMode,
-            ATTR_BATTERYSTATUS: self._batteryStatus
+            ATTR_BATTERYSTATUS: self._batteryStatus,
+            'GoogleTravelTime': self._googletraveltime
         }
 
     @property
@@ -370,6 +378,10 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
                 return
             if self._distance > 100:
                 self._interval = round(self._distance, 0)
+                if self._googletraveltime is not None:
+                    googletraveltimestate = self.hass.states.get(self._googletraveltime)
+                    if googletraveltimestate is not None:
+                        self._interval = round(float(googletraveltimestate) - 10, 0)
             elif self._distance > 50:
                 self._interval = 30
             elif self._distance > 25:
@@ -565,7 +577,7 @@ class IEvent(Entity):  # pylint: disable=too-many-instance-attributes
 class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
     """ Represents a Proximity in Home Assistant. """
     def __init__(self, hass, username, password, cookiedirectory, name, ignored_devices,
-                 getevents):
+                 getevents, googletraveltime):
         # pylint: disable=too-many-arguments
         self.hass = hass
         self.username = username
@@ -583,6 +595,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
         self.nextevents = {}
         self._ignored_devices = ignored_devices
         self._ignored_identifiers = {}
+        self.googletraveltime = googletraveltime
 
         self.entity_id = generate_entity_id(
             ENTITY_ID_FORMAT_ICLOUD, self.accountname,
@@ -603,7 +616,10 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                                         status['name']).lower()
                     if (devicename not in self.devices and
                         devicename not in self._ignored_devices):
-                        idevice = IDevice(self.hass, self, devicename, device)
+                        gtt = None
+                        if devicename in self.googletraveltime:
+                            gtt = self.googletraveltime[devicename]
+                        idevice = IDevice(self.hass, self, devicename, device, gtt)
                         idevice.update_ha_state()
                         self.devices[devicename] = idevice
                     elif devicename in self._ignored_devices:
@@ -709,7 +725,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                                                              tz,
                                                              location)
 
-            except PyiCloudFailedLoginException as error:
+            except Exception as error:
                 _LOGGER.error('Error logging into iCloud Service: %s',
                               error)
 
