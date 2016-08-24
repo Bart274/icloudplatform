@@ -122,7 +122,7 @@ def setup(hass, config):
         googletraveltime = {}
         if 'googletraveltime' in account_config:
             for google, googleconfig in account_config.get('googletraveltime').items():
-                googletraveltime[account] = googleconfig
+                googletraveltime[google] = googleconfig
         _LOGGER.info("ICLOUD: account %s googletraveltime %s", account, googletraveltime)
 
         icloudaccount = Icloud(hass, username, password, cookiedirectory, account,
