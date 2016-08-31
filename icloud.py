@@ -58,6 +58,9 @@ ATTR_LOWPOWERMODE = 'Low_power_mode'
 ATTR_BATTERYSTATUS = 'Battery_status'
 ATTR_LOCATION = 'Location'
 ATTR_FRIENDLY_NAME = 'Friendly_name'
+ATTR_GOOGLE_MAPS_TRAVEL_TIME = 'GoogleMapsTravelTime'
+ATTR_GOOGLE_MAPS_TRAVEL_TIME_DURATION = 'GMTT_duration'
+ATTR_GOOGLE_MAPS_TRAVEL_TIME_ORIGIN = 'GMTT_origin'
 
 TYPE_CURRENT = 'currentevent'
 TYPE_NEXT = 'nextevent'
@@ -230,6 +233,8 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
         self._lowPowerMode = None
         self._batteryStatus = None
         self._googletraveltime = googletraveltime
+        self._googletraveltimeduration = None
+        self._googletraveltimeorigin = None
 
         self.entity_id = generate_entity_id(
             ENTITY_ID_FORMAT_DEVICE, self.devicename,
@@ -248,15 +253,28 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
     @property
     def state_attributes(self):
         """ returns the friendlyname of the icloud tracker """
-        return {
-            ATTR_DEVICENAME: self.devicename,
-            ATTR_BATTERY: self._battery,
-            ATTR_DISTANCE: self._distance,
-            ATTR_DEVICESTATUS: self._devicestatus,
-            ATTR_LOWPOWERMODE: self._lowPowerMode,
-            ATTR_BATTERYSTATUS: self._batteryStatus,
-            'GoogleTravelTime': self._googletraveltime
-        }
+        if self._googletraveltime is None:
+            return {
+                ATTR_DEVICENAME: self.devicename,
+                ATTR_BATTERY: self._battery,
+                ATTR_DISTANCE: self._distance,
+                ATTR_DEVICESTATUS: self._devicestatus,
+                ATTR_LOWPOWERMODE: self._lowPowerMode,
+                ATTR_BATTERYSTATUS: self._batteryStatus,
+                ATTR_GOOGLE_MAPS_TRAVEL_TIME: self._googletraveltime
+            }
+        else:
+            return {
+                ATTR_DEVICENAME: self.devicename,
+                ATTR_BATTERY: self._battery,
+                ATTR_DISTANCE: self._distance,
+                ATTR_DEVICESTATUS: self._devicestatus,
+                ATTR_LOWPOWERMODE: self._lowPowerMode,
+                ATTR_BATTERYSTATUS: self._batteryStatus,
+                ATTR_GOOGLE_MAPS_TRAVEL_TIME: self._googletraveltime,
+                ATTR_GOOGLE_MAPS_TRAVEL_TIME_DURATION: self._googletraveltimeduration,
+                ATTR_GOOGLE_MAPS_TRAVEL_TIME_ORIGIN: self._googletraveltimeorigin
+            }
 
     @property
     def icon(self):
@@ -269,6 +287,17 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
         maxminute = round(self._interval / 5, 0)
         if currentminutes % self._interval <= maxminute:
             self.update_icloud(see)
+        
+        self._googletraveltimeduration = None
+        self._googletraveltimeorigin = None
+        if self._googletraveltime is not None:
+            googletraveltimestate = self.hass.states.get(self._googletraveltime)
+            if googletraveltimestate is not None:
+                if (self._googletraveltimeduration != googletraveltimestate.state or ('origin_addresses' in googletraveltimestate.attributes and self._googletraveltimeorigin != googletraveltimestate.attributes['origin_addresses'])):
+                    self._googletraveltimeduration = googletraveltimestate.state
+                    if 'origin_addresses' in googletraveltimestate.attributes:
+                        self._googletraveltimeorigin = googletraveltimestate.attributes['origin_addresses']
+                    self.update_ha_state()
 
     def lost_iphone(self):
         """ Calls the lost iphone function if the device is found """
