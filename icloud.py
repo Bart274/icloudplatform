@@ -342,6 +342,7 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
                 self._lowPowerMode = status['lowPowerMode']
                 self._batteryStatus = status['batteryStatus']
                 self.update_ha_state()
+                status = self.identifier.status(DEVICESTATUSSET)
                 battery = status['batteryLevel']*100
                 location = status['location']
                 if location:
