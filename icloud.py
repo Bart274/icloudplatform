@@ -411,7 +411,7 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
                 if self._googletraveltime is not None:
                     googletraveltimestate = self.hass.states.get(self._googletraveltime)
                     if googletraveltimestate is not None:
-                        self._interval = round(float(googletraveltimestate) - 10, 0)
+                        self._interval = round(float(googletraveltimestate.state) - 10, 0)
             elif self._distance > 50:
                 self._interval = 30
             elif self._distance > 25:
