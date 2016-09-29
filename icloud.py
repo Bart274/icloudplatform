@@ -284,8 +284,9 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
     def keep_alive(self):
         """ Keeps the api alive """
         currentminutes = dt_util.now().hour * 60 + dt_util.now().minute
-        maxminute = round(self._interval / 5, 0)
-        if currentminutes % self._interval <= maxminute:
+        if currentminutes % self._interval == 0:
+            self.update_icloud(see)
+        elif self._interval > 10 and currentminutes % self._interval == 3:
             self.update_icloud(see)
         
         self._googletraveltimeduration = None
@@ -659,7 +660,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                     from_dt = dt_util.now()
                     to_dt = from_dt + timedelta(days=7)
                     events = self.api.calendar.events(from_dt, to_dt)
-                    new_events = sorted(events.list_of_dict, key=operator.attrgetter('startDate'))
+                    new_events = sorted(events, key=self.get_key)
                     starttime = None
                     endtime = None
                     duration = None
@@ -775,7 +776,10 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
     def icon(self):
         """Return the icon to use for device if any."""
         return 'mdi:account'
-
+        
+    def get_key(self, item):
+        return item.get('startDate')
+        
     def keep_alive(self):
         """ Keeps the api alive """
         if self.api is None:
@@ -799,7 +803,7 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                 from_dt = dt_util.now()
                 to_dt = from_dt + timedelta(days=7)
                 events = self.api.calendar.events(from_dt, to_dt)
-                new_events = sorted(events.list_of_dict, key=operator.attrgetter('startDate'))
+                new_events = sorted(events, key=self.get_key)
                 starttime = None
                 endtime = None
                 duration = None
