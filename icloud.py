@@ -286,7 +286,9 @@ class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
         currentminutes = dt_util.now().hour * 60 + dt_util.now().minute
         if currentminutes % self._interval == 0:
             self.update_icloud(see)
-        elif self._interval > 10 and currentminutes % self._interval == 3:
+        elif self._interval > 10 and currentminutes % self._interval == 2:
+            self.update_icloud(see)
+        elif self._interval > 10 and currentminutes % self._interval == 4:
             self.update_icloud(see)
         
         self._googletraveltimeduration = None
