@@ -629,6 +629,9 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
         self._ignored_devices = ignored_devices
         self._ignored_identifiers = {}
         self.googletraveltime = googletraveltime
+        
+        self._currentevents = 0
+        self._nextevents = 0
 
         self.entity_id = generate_entity_id(
             ENTITY_ID_FORMAT_ICLOUD, self.accountname,
@@ -770,9 +773,16 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
     @property
     def state_attributes(self):
         """ returns the friendlyname of the icloud tracker """
-        return {
-            ATTR_ACCOUNTNAME: self.accountname
-        }
+        if self.getevents:
+            return {
+                ATTR_ACCOUNTNAME: self.accountname,
+                'current events': self._currentevents,
+                'next events': self._nextevents
+            }
+        else:
+            return {
+                ATTR_ACCOUNTNAME: self.accountname
+            }
 
     @property
     def icon(self):
@@ -931,6 +941,16 @@ class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
                     else:
                         self.nextevents[addedevent].check_alive()
 
+                self._currentevents = 0
+                self._nextevents = 0
+                for entity_id in self.hass.states.entity_ids('ievent'):
+                    state = self.hass.states.get(entity_id)
+                    if state.attributes.get('Friendly_name') == 'nextevent':
+                        self._nextevents = self._nextevents + 1
+                    elif state.attributes.get('Friendly_name') == 'currentevent':
+                        self._currentevents = self._currentevents + 1
+                self.update_ha_state()
+                        
     def lost_iphone(self, devicename):
         """ Calls the lost iphone function if the device is found """
         if self.api is not None:
