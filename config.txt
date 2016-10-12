@@ -10,6 +10,8 @@ icloud:
     ignored_devices:
       - iphonevanbvb
       - ipodvanbart
+    googletraveltime:
+      iphonebart: sensor.bart_naar_huis
     events: True
   sharon:
     username: <gf's username>
