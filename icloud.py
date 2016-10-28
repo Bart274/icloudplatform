@@ -2,38 +2,33 @@
 Platform that supports scanning iCloud.
 
 For more details about this platform, please refer to the documentation at
-https://home-assistant.io/components/icloud/
+https://home-assistant.io/components/device_tracker.icloud/
 """
 import logging
-from datetime import datetime, timedelta
-from math import floor
 import random
+import os
 
 import voluptuous as vol
 
-from pytz import timezone
-import pytz
-
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
-from homeassistant.helpers.entity import (Entity, generate_entity_id)
-from homeassistant.components.device_tracker import see
-from homeassistant.helpers.event import (track_state_change,
-                                         track_utc_time_change)
+from homeassistant.components.device_tracker import (
+    PLATFORM_SCHEMA, DOMAIN, ATTR_ATTRIBUTES, ENTITY_ID_FORMAT)
+from homeassistant.components.zone import active_zone
+from homeassistant.helpers.event import track_utc_time_change
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers import template
 from homeassistant.util import slugify
 import homeassistant.util.dt as dt_util
 from homeassistant.util.location import distance
+from homeassistant.loader import get_component
 
 _LOGGER = logging.getLogger(__name__)
 
 REQUIREMENTS = ['pyicloud==0.9.1']
 
-DEPENDENCIES = ['zone', 'device_tracker']
-
 CONF_IGNORED_DEVICES = 'ignored_devices'
 CONF_GMTT = 'google_maps_travel_time'
 CONF_COOKIEDIRECTORY = 'cookiedirectory'
+CONF_ACCOUNTNAME = 'account_name'
 
 # entity attributes
 ATTR_ACCOUNTNAME = 'account_name'
@@ -50,11 +45,7 @@ ATTR_GMTT_ORIGIN = 'gmtt_origin'
 
 ICLOUDTRACKERS = {}
 
-DOMAIN = 'icloud'
-DOMAIN2 = 'idevice'
-
-ENTITY_ID_FORMAT_ICLOUD = DOMAIN + '.{}'
-ENTITY_ID_FORMAT_DEVICE = DOMAIN2 + '.{}'
+_CONFIGURING = {}
 
 DEVICESTATUSSET = ['features', 'maxMsgChar', 'darkWake', 'fmlyShare',
                    'deviceStatus', 'remoteLock', 'activationLocked',
@@ -69,452 +60,396 @@ DEVICESTATUSSET = ['features', 'maxMsgChar', 'darkWake', 'fmlyShare',
                    'wipedTimestamp', 'modelDisplayName', 'locationEnabled',
                    'isMac', 'locFoundEnabled']
 
+DEVICESTATUSCODES = {'200': 'online', '201': 'offline', '203': 'pending',
+                     '204': 'unregistered'}
+
 SERVICE_SCHEMA = vol.Schema({
-    vol.Optional(ATTR_ACCOUNTNAME): cv.string,
+    vol.Optional(ATTR_ACCOUNTNAME): vol.All(cv.ensure_list, [cv.string]),
     vol.Optional(ATTR_DEVICENAME): cv.string,
     vol.Optional(ATTR_INTERVAL): cv.positive_int,
 })
 
-ACCOUNT_SCHEMA = vol.Schema({
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_USERNAME): cv.string,
     vol.Required(CONF_PASSWORD): cv.string,
-    vol.Optional(CONF_COOKIEDIRECTORY, default=None): cv.string,
-    vol.Optional(CONF_IGNORED_DEVICES, default=[]):
-        vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional(ATTR_ACCOUNTNAME): cv.slug,
     vol.Optional(CONF_GMTT, default={}):
-        vol.Schema({cv.string: cv.string}),
+        vol.Schema({cv.slug: cv.entity_id}),
 })
 
-CONFIG_SCHEMA = vol.Schema({
-    DOMAIN: vol.Schema({
-        vol.Required(cv.slug): ACCOUNT_SCHEMA,
-    })
-}, extra=vol.ALLOW_EXTRA)
 
-
-def setup(hass, config):  # pylint: disable=too-many-locals,too-many-branches
+def setup_scanner(hass, config: dict, see):
     """Set up the iCloud Scanner."""
-    for account, account_config in config[DOMAIN].items():
-        # Get the username and password from the configuration
-        username = account_config.get(CONF_USERNAME)
-        password = account_config.get(CONF_PASSWORD)
-        cookiedirectory = account_config.get(CONF_COOKIEDIRECTORY)
+    # pylint: disable=too-many-locals
+    username = config.get(CONF_USERNAME)
+    password = config.get(CONF_PASSWORD)
+    account = config.get(CONF_ACCOUNTNAME, slugify(username))
 
-        ignored_devices = []
-        ignored_dev = account_config.get(CONF_IGNORED_DEVICES)
-        for each_dev in ignored_dev:
-            ignored_devices.append(each_dev)
+    googletraveltime = config.get(CONF_GMTT)
 
-        googletraveltime = {}
-        gttconfig = account_config.get(CONF_GMTT)
-        for google, googleconfig in gttconfig.items():
-            googletraveltime[google] = googleconfig
-
-        icloudaccount = Icloud(hass, username, password, cookiedirectory,
-                               account, ignored_devices, googletraveltime)
-        icloudaccount.update_ha_state()
+    icloudaccount = Icloud(hass, username, password, account, googletraveltime,
+                           see)
+    if icloudaccount:
         ICLOUDTRACKERS[account] = icloudaccount
-        if ICLOUDTRACKERS[account].api is not None:
-            for device in ICLOUDTRACKERS[account].devices:
-                iclouddevice = ICLOUDTRACKERS[account].devices[device]
-                devicename = iclouddevice.devicename.lower()
-                track_state_change(hass,
-                                   'device_tracker.' + devicename,
-                                   iclouddevice.devicechanged)
 
-    if not ICLOUDTRACKERS:
+    else:
         _LOGGER.error("No ICLOUDTRACKERS added")
         return False
 
-    randomseconds = random.randint(10, 59)
-
     def lost_iphone(call):
         """Call the lost iphone function if the device is found."""
-        accountname = call.data.get(ATTR_ACCOUNTNAME)
+        accounts = call.data.get(ATTR_ACCOUNTNAME, ICLOUDTRACKERS)
         devicename = call.data.get(ATTR_DEVICENAME)
-        if accountname is None:
-            for account in ICLOUDTRACKERS:
+        for account in accounts:
+            if account in ICLOUDTRACKERS:
                 ICLOUDTRACKERS[account].lost_iphone(devicename)
-        elif accountname in ICLOUDTRACKERS:
-            ICLOUDTRACKERS[accountname].lost_iphone(devicename)
-
-    hass.services.register(DOMAIN, 'lost_iphone',
-                           lost_iphone)
+    hass.services.register(DOMAIN, 'icloud_lost_iphone', lost_iphone,
+                           schema=SERVICE_SCHEMA)
 
     def update_icloud(call):
         """Call the update function of an icloud account."""
-        accountname = call.data.get(ATTR_ACCOUNTNAME)
+        accounts = call.data.get(ATTR_ACCOUNTNAME, ICLOUDTRACKERS)
         devicename = call.data.get(ATTR_DEVICENAME)
-        if accountname is None:
-            for account in ICLOUDTRACKERS:
+        for account in accounts:
+            if account in ICLOUDTRACKERS:
                 ICLOUDTRACKERS[account].update_icloud(devicename)
-        elif accountname in ICLOUDTRACKERS:
-            ICLOUDTRACKERS[accountname].update_icloud(devicename)
-    hass.services.register(DOMAIN,
-                           'update_icloud', update_icloud)
+    hass.services.register(DOMAIN, 'icloud_update', update_icloud,
+                           schema=SERVICE_SCHEMA)
 
-    def keep_alive(now):
-        """Keep the api logged in of all account."""
-        for accountname in ICLOUDTRACKERS:
-            try:
-                ICLOUDTRACKERS[accountname].keep_alive()
-            except ValueError:
-                _LOGGER.error("something went wrong for account %s, " +
-                              "retrying in a minute", accountname)
-
-    track_utc_time_change(
-        hass, keep_alive,
-        second=randomseconds
-    )
+    def reset_account_icloud(call):
+        """Reset an icloud account."""
+        accounts = call.data.get(ATTR_ACCOUNTNAME, ICLOUDTRACKERS)
+        for account in accounts:
+            if account in ICLOUDTRACKERS:
+                ICLOUDTRACKERS[account].reset_account_icloud()
+    hass.services.register(DOMAIN, 'icloud_reset_account',
+                           reset_account_icloud, schema=SERVICE_SCHEMA)
 
     def setinterval(call):
         """Call the update function of an icloud account."""
-        accountname = call.data.get(ATTR_ACCOUNTNAME)
+        accounts = call.data.get(ATTR_ACCOUNTNAME, ICLOUDTRACKERS)
         interval = call.data.get(ATTR_INTERVAL)
         devicename = call.data.get(ATTR_DEVICENAME)
-        if accountname is None:
-            for account in ICLOUDTRACKERS:
+        for account in accounts:
+            if account in ICLOUDTRACKERS:
                 ICLOUDTRACKERS[account].setinterval(interval, devicename)
-        elif accountname in ICLOUDTRACKERS:
-            ICLOUDTRACKERS[accountname].setinterval(interval, devicename)
 
-    hass.services.register(DOMAIN,
-                           'setinterval', setinterval)
+    hass.services.register(DOMAIN, 'icloud_set_interval', setinterval,
+                           schema=SERVICE_SCHEMA)
 
     # Tells the bootstrapper that the component was successfully initialized
     return True
 
 
-class IDevice(Entity):  # pylint: disable=too-many-instance-attributes
-    """Represent an iDevice in Home Assistant."""
-
-    def __init__(self, hass, icloudobject, name, identifier, googletraveltime):
-        """Initialize the iDevice."""
-        # pylint: disable=too-many-arguments
-        self.hass = hass
-        self.icloudobject = icloudobject
-        self.identifier = identifier
-        self._request_interval_seconds = 60
-        self._interval = 1
-        self.api = icloudobject.api
-        self._overridestate = None
-        self._devicestatuscode = None
-
-        self._attrs = {}
-        self._attrs[ATTR_DEVICENAME] = name
-        if googletraveltime is not None:
-            self._attrs[ATTR_GMTT] = googletraveltime
-
-        self.entity_id = generate_entity_id(
-            ENTITY_ID_FORMAT_DEVICE, self._attrs[ATTR_DEVICENAME],
-            hass=self.hass)
-
-    @property
-    def state(self):
-        """Return the state of the iDevice."""
-        return self._interval
-
-    @property
-    def unit_of_measurement(self):
-        """Unit of measurement of this entity."""
-        return "minutes"
-
-    @property
-    def state_attributes(self):
-        """Return the attributes of the iDevice."""
-        return self._attrs
-
-    @property
-    def icon(self):
-        """Return the icon to use for device if any."""
-        return 'mdi:cellphone-iphone'
-
-    @property
-    def devicename(self):
-        """Return the devicename of the device."""
-        return self._attrs[ATTR_DEVICENAME]
-
-    def keep_alive(self):
-        """Keep the api alive."""
-        currentminutes = dt_util.now().hour * 60 + dt_util.now().minute
-        if currentminutes % self._interval == 0:
-            self.update_icloud()
-        elif self._interval > 10 and currentminutes % self._interval in [2, 4]:
-            self.update_icloud()
-
-        if ATTR_GMTT in self._attrs:
-            gttstate = self.hass.states.get(self._attrs[ATTR_GMTT])
-            if gttstate is not None:
-                if 'origin_addresses' in gttstate.attributes:
-                    duration = gttstate.state
-                    origin = gttstate.attributes['origin_addresses']
-                    self._attrs[ATTR_GMTT_DURATION] = duration
-                    self._attrs[ATTR_GMTT_ORIGIN] = origin
-                    self.update_ha_state()
-
-    def lost_iphone(self):
-        """Call the lost iphone function if the device is found."""
-        if self.api is not None:
-            self.api.authenticate()
-            self.identifier.play_sound()
-
-    @staticmethod
-    def data_is_accurate(data):
-        """Check if location data is accurate."""
-        if not data:
-            return False
-        elif not data['locationFinished']:
-            return False
-        return True
-
-    def update_icloud(self):
-        """Authenticate against iCloud and scan for devices."""
-        if self.api is not None:
-            from pyicloud.exceptions import PyiCloudNoDevicesException
-
-            try:
-                status = self.identifier.status(DEVICESTATUSSET)
-                dev_id = slugify(status['name'].replace(' ', '', 99))
-                self._devicestatuscode = status['deviceStatus']
-                if self._devicestatuscode == '200':
-                    self._attrs[ATTR_DEVICESTATUS] = 'online'
-                elif self._devicestatuscode == '201':
-                    self._attrs[ATTR_DEVICESTATUS] = 'offline'
-                elif self._devicestatuscode == '203':
-                    self._attrs[ATTR_DEVICESTATUS] = 'pending'
-                elif self._devicestatuscode == '204':
-                    self._attrs[ATTR_DEVICESTATUS] = 'unregistered'
-                else:
-                    self._attrs[ATTR_DEVICESTATUS] = 'error'
-                self._attrs[ATTR_LOWPOWERMODE] = status['lowPowerMode']
-                self._attrs[ATTR_BATTERYSTATUS] = status['batteryStatus']
-                self.update_ha_state()
-                status = self.identifier.status(DEVICESTATUSSET)
-                battery = status['batteryLevel']*100
-                location = status['location']
-                if location:
-                    see(hass=self.hass, dev_id=dev_id,
-                        host_name=status['name'], gps=(location['latitude'],
-                                                       location['longitude']),
-                        battery=battery,
-                        gps_accuracy=location['horizontalAccuracy'])
-            except PyiCloudNoDevicesException:
-                _LOGGER.error('No iCloud Devices found!')
-
-    def get_default_interval(self):
-        """Get default interval of iDevice."""
-        devid = 'device_tracker.' + self._attrs[ATTR_DEVICENAME]
-        devicestate = self.hass.states.get(devid)
-        self._overridestate = None
-        self.devicechanged(self._attrs[ATTR_DEVICENAME], None, devicestate)
-
-    def setinterval(self, interval=None):
-        """Set interval of iDevice."""
-        if interval is not None:
-            devid = 'device_tracker.' + self._attrs[ATTR_DEVICENAME]
-            devicestate = self.hass.states.get(devid)
-            if devicestate is not None:
-                self._overridestate = devicestate.state
-            self._interval = interval
-        else:
-            self.get_default_interval()
-        self.update_ha_state()
-        self.update_icloud()
-
-    def devicechanged(self, entity, old_state, new_state):
-        """Calculate new interval."""
-        # pylint: disable=too-many-branches
-        if entity is None:
-            return
-
-        self._attrs[ATTR_DISTANCE] = None
-        if 'latitude' in new_state.attributes:
-            device_state_lat = new_state.attributes['latitude']
-            device_state_long = new_state.attributes['longitude']
-            zone_state = self.hass.states.get('zone.home')
-            zone_state_lat = zone_state.attributes['latitude']
-            zone_state_long = zone_state.attributes['longitude']
-            self._attrs[ATTR_DISTANCE] = distance(
-                device_state_lat, device_state_long, zone_state_lat,
-                zone_state_long)
-            self._attrs[ATTR_DISTANCE] = self._attrs[ATTR_DISTANCE] / 1000
-            self._attrs[ATTR_DISTANCE] = round(self._attrs[ATTR_DISTANCE], 1)
-        if 'battery' in new_state.attributes:
-            self._attrs[ATTR_BATTERY] = new_state.attributes['battery']
-
-        if new_state.state == self._overridestate:
-            self.update_ha_state()
-            return
-
-        self._overridestate = None
-
-        if new_state.state != 'not_home':
-            self._interval = 30
-            self.update_ha_state()
-        else:
-            if self._attrs[ATTR_DISTANCE] is None:
-                self.update_ha_state()
-                return
-            if self._attrs[ATTR_DISTANCE] > 100:
-                self._interval = round(self._attrs[ATTR_DISTANCE], 0)
-                if (ATTR_GMTT in
-                    self._attrs[ATTR_GMTT]):
-                    gttstate = self.hass.states.get(self._attrs[ATTR_GMTT])
-                    if gttstate is not None:
-                        self._interval = round(float(gttstate.state) - 10, 0)
-            elif self._attrs[ATTR_DISTANCE] > 50:
-                self._interval = 30
-            elif self._attrs[ATTR_DISTANCE] > 25:
-                self._interval = 15
-            elif self._attrs[ATTR_DISTANCE] > 10:
-                self._interval = 5
-            else:
-                self._interval = 1
-            if self._attrs[ATTR_BATTERY] is not None:
-                if (self._attrs[ATTR_BATTERY] <= 33 and
-                    self._attrs[ATTR_DISTANCE] > 3):
-                    self._interval = self._interval * 2
-            self.update_ha_state()
-
-
-class Icloud(Entity):  # pylint: disable=too-many-instance-attributes
+class Icloud(object):  # pylint: disable=too-many-instance-attributes
     """Represent an icloud account in Home Assistant."""
 
-    def __init__(self, hass, username, password, cookiedirectory, name,
-                 ignored_devices, googletraveltime):
+    def __init__(self, hass, username, password, name, googletraveltime, see):
         """Initialize an iCloud account."""
         # pylint: disable=too-many-arguments,too-many-branches
         # pylint: disable=too-many-statements,too-many-locals
         self.hass = hass
         self.username = username
         self.password = password
-        self.cookiedir = cookiedirectory
-        self._max_wait_seconds = 120
-        self._request_interval_seconds = 10
-        self._interval = 1
         self.api = None
+        self.accountname = name
         self.devices = {}
-        self._ignored_devices = ignored_devices
-        self._ignored_identifiers = {}
+        self.seen_devices = {}
         self.googletraveltime = googletraveltime
+        self._overridestates = {}
+        self._intervals = {}
+        self.see = see
+
+        self._trusted_device = None
+        self._verification_code = None
 
         self._attrs = {}
         self._attrs[ATTR_ACCOUNTNAME] = name
 
-        self.entity_id = generate_entity_id(
-            ENTITY_ID_FORMAT_ICLOUD, self._attrs[ATTR_ACCOUNTNAME],
-            hass=self.hass)
+        self.reset_account_icloud()
 
-        if self.username is None or self.password is None:
-            _LOGGER.error('Must specify a username and password')
-        else:
-            from pyicloud import PyiCloudService
-            from pyicloud.exceptions import PyiCloudFailedLoginException
-            try:
-                # Attempt the login to iCloud
-                self.api = PyiCloudService(
-                    self.username, self.password,
-                    cookie_directory=self.cookiedir, verify=True)
-                for device in self.api.devices:
-                    status = device.status(DEVICESTATUSSET)
-                    devicename = slugify(status['name'].replace(' ', '', 99))
-                    if (devicename not in self.devices and
-                            devicename not in self._ignored_devices):
-                        gtt = None
-                        if devicename in self.googletraveltime:
-                            gtt = self.googletraveltime[devicename]
-                        idevice = IDevice(self.hass, self, devicename, device,
-                                          gtt)
-                        idevice.update_ha_state()
-                        self.devices[devicename] = idevice
-                    elif devicename in self._ignored_devices:
-                        self._ignored_identifiers[devicename] = device
+        randomseconds = random.randint(10, 59)
+        track_utc_time_change(
+            self.hass, self.keep_alive,
+            second=randomseconds
+        )
 
-            except PyiCloudFailedLoginException as error:
-                _LOGGER.error('Error logging into iCloud Service: %s',
-                              error)
+    def reset_account_icloud(self):
+        """Reset an icloud account."""
+        from pyicloud import PyiCloudService
+        from pyicloud.exceptions import PyiCloudFailedLoginException
+        try:
+            icloud_dir = self.hass.config.path('icloud')
+            if not os.path.exists(icloud_dir):
+                os.makedirs(icloud_dir)
+            self.api = PyiCloudService(
+                self.username, self.password,
+                cookie_directory=icloud_dir,
+                verify=True)
+            self.devices = {}
+            self._overridestates = {}
+            self._intervals = {}
+            for device in self.api.devices:
+                status = device.status(DEVICESTATUSSET)
+                devicename = slugify(status['name'].replace(' ', '', 99))
+                if devicename not in self.devices:
+                    self.devices[devicename] = device
+                    self._intervals[devicename] = 1
+                    self._overridestates[devicename] = None
+                    self.update_device(devicename)
 
-    @property
-    def state(self):
-        """Return the state of the icloud account."""
-        return self.api is not None
+        except PyiCloudFailedLoginException as error:
+            _LOGGER.error('Error logging into iCloud Service: %s', error)
 
-    @property
-    def state_attributes(self):
-        """Return the attributes of the icloud account."""
-        return self._attrs
+    def icloud_trusted_device_callback(self, callback_data):
+        """The trusted device is chosen."""
+        self._trusted_device = int(callback_data.get('0', '0'))
+        self._trusted_device = self.api.trusted_devices[self._trusted_device]
+        if self.accountname in _CONFIGURING:
+            request_id = _CONFIGURING.pop(self.accountname)
+            configurator = get_component('configurator')
+            configurator.request_done(request_id)
 
-    @property
-    def icon(self):
-        """Return the icon to use for device if any."""
-        return 'mdi:account'
+    def icloud_need_trusted_device(self):
+        """We need a trusted device."""
+        configurator = get_component('configurator')
+        if self.accountname in _CONFIGURING:
+            return
 
-    @staticmethod
-    def get_key(item):
-        """Sort key of events."""
-        return item.get('startDate')
+        devicesstring = ''
+        devices = self.api.trusted_devices
+        for i, device in enumerate(devices):
+            devicesstring += "{}: {};".format(i, device.get('deviceName'))
 
-    def keep_alive(self):
+        _CONFIGURING[self.accountname] = configurator.request_config(
+            self.hass, 'iCloud {}'.format(self.accountname),
+            self.icloud_trusted_device_callback,
+            description=(
+                'Please choose your trusted device by entering'
+                ' the index from this list: ' + devicesstring),
+            description_image="/static/images/config_icloud.png",
+            submit_caption='Confirm',
+            fields=[{'id': '0'}]
+        )
+
+    def icloud_verification_callback(self, callback_data):
+        """The trusted device is chosen."""
+        self._verification_code = callback_data.get('0')
+        if self.accountname in _CONFIGURING:
+            request_id = _CONFIGURING.pop(self.accountname)
+            configurator = get_component('configurator')
+            configurator.request_done(request_id)
+
+    def icloud_need_verification_code(self):
+        """We need a verification code."""
+        configurator = get_component('configurator')
+        if self.accountname in _CONFIGURING:
+            return
+
+        if self.api.send_verification_code(self._trusted_device):
+            self._verification_code = 'waiting'
+
+        _CONFIGURING[self.accountname] = configurator.request_config(
+            self.hass, 'iCloud {}'.format(self.accountname),
+            self.icloud_verification_callback,
+            description=('Please enter the validation code:'),
+            description_image="/static/images/config_icloud.png",
+            submit_caption='Confirm',
+            fields=[{'code': '0'}]
+        )
+
+    def keep_alive(self, now):
         """Keep the api alive."""
         # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-        if self.api is None:
-            from pyicloud import PyiCloudService
-            from pyicloud.exceptions import PyiCloudFailedLoginException
-            try:
-                # Attempt the login to iCloud
-                self.api = PyiCloudService(
-                    self.username, self.password,
-                    cookie_directory=self.cookiedir, verify=True)
-            except PyiCloudFailedLoginException as error:
-                _LOGGER.error('Error logging into iCloud Service: %s',
-                              error)
+        from pyicloud.exceptions import PyiCloud2FARequiredError
 
-        if self.api is not None:
+        if self.api is None:
+            self.reset_account_icloud()
+
+        if self.api is None:
+            return
+
+        if self.api.requires_2fa:
+            try:
+                self.api.authenticate()
+            except PyiCloud2FARequiredError:
+                if self._trusted_device is None:
+                    self.icloud_need_trusted_device()
+                    return
+
+                if self._verification_code is None:
+                    self.icloud_need_verification_code()
+                    return
+
+                if self._verification_code == 'waiting':
+                    return
+
+                if self.api.validate_verification_code(
+                        self._trusted_device, self._verification_code):
+                    self._verification_code = None
+        else:
             self.api.authenticate()
-            for devicename in self.devices:
-                self.devices[devicename].keep_alive()
+
+        currentminutes = dt_util.now().hour * 60 + dt_util.now().minute
+        for devicename in self.devices:
+            interval = self._intervals.get(devicename, 1)
+            if ((currentminutes % interval == 0) or
+                    (interval > 10 and
+                     currentminutes % interval in [2, 4])):
+                self.update_device(devicename)
+
+    def determine_interval(self, devicename, latitude, longitude, battery):
+        """Calculate new interval."""
+        # pylint: disable=too-many-branches
+        distancefromhome = None
+        zone_state = self.hass.states.get('zone.home')
+        zone_state_lat = zone_state.attributes['latitude']
+        zone_state_long = zone_state.attributes['longitude']
+        distancefromhome = distance(latitude, longitude, zone_state_lat,
+                                    zone_state_long)
+        distancefromhome = round(distancefromhome / 1000, 1)
+
+        currentzone = active_zone(self.hass, latitude, longitude)
+
+        if ((currentzone is not None and
+             currentzone == self._overridestates.get(devicename)) or
+                (currentzone is None and
+                 self._overridestates.get(devicename) == 'away')):
+            return
+
+        self._overridestates[devicename] = None
+
+        if currentzone is not None:
+            self._intervals[devicename] = 30
+            return
+
+        if distancefromhome is None:
+            return
+        if distancefromhome > 100:
+            self._intervals[devicename] = round(distancefromhome, 0)
+            gtt = self.googletraveltime.get(devicename)
+            if gtt is not None:
+                gttstate = self.hass.states.get(gtt)
+                if gttstate is not None:
+                    self._intervals[devicename] = round(
+                        float(gttstate.state) - 10, 0)
+        elif distancefromhome > 50:
+            self._intervals[devicename] = 30
+        elif distancefromhome > 25:
+            self._intervals[devicename] = 15
+        elif distancefromhome > 10:
+            self._intervals[devicename] = 5
+        else:
+            self._intervals[devicename] = 1
+        if battery is not None and battery <= 33 and distancefromhome > 3:
+            self._intervals[devicename] = self._intervals[devicename] * 2
+
+    def update_device(self, devicename):
+        """Update the device_tracker entity."""
+        # pylint: disable=too-many-branches,too-many-statements
+        # pylint: disable=too-many-nested-blocks,too-many-locals
+        from pyicloud.exceptions import PyiCloudNoDevicesException
+
+        entity = self.hass.states.get(ENTITY_ID_FORMAT.format(devicename))
+        if entity is None and devicename in self.seen_devices:
+            return
+        attrs = {}
+        kwargs = {}
+        gtt = self.googletraveltime.get(devicename)
+        if gtt is not None:
+            gttstate = self.hass.states.get(gtt)
+            if gttstate is not None:
+                if 'origin_addresses' in gttstate.attributes:
+                    duration = gttstate.state
+                    origin = gttstate.attributes['origin_addresses']
+                    attrs[ATTR_GMTT_DURATION] = duration
+                    attrs[ATTR_GMTT_ORIGIN] = origin
+
+        if self.api is None:
+            return
+
+        try:
+            for device in self.api.devices:
+                if str(device) == str(self.devices[devicename]):
+                    status = device.status(DEVICESTATUSSET)
+                    dev_id = status['name'].replace(' ', '', 99)
+                    dev_id = slugify(dev_id)
+                    devicestatuscode = status['deviceStatus']
+                    attrs[ATTR_DEVICESTATUS] = DEVICESTATUSCODES.get(
+                        devicestatuscode, 'error')
+                    lowpowermode = status['lowPowerMode']
+                    attrs[ATTR_LOWPOWERMODE] = lowpowermode
+                    batterystatus = status['batteryStatus']
+                    attrs[ATTR_BATTERYSTATUS] = batterystatus
+                    attrs[ATTR_ACCOUNTNAME] = self.accountname
+                    status = device.status(DEVICESTATUSSET)
+                    battery = status.get('batteryLevel', 0) * 100
+                    location = status['location']
+                    if location:
+                        self.determine_interval(
+                            devicename, location['latitude'],
+                            location['longitude'], battery)
+                        interval = self._intervals.get(devicename, 1)
+                        attrs[ATTR_INTERVAL] = interval
+                        accuracy = location['horizontalAccuracy']
+                        kwargs['dev_id'] = dev_id
+                        kwargs['host_name'] = status['name']
+                        kwargs['gps'] = (location['latitude'],
+                                         location['longitude'])
+                        kwargs['battery'] = battery
+                        kwargs['gps_accuracy'] = accuracy
+                        kwargs[ATTR_ATTRIBUTES] = attrs
+                        self.see(**kwargs)
+                        self.seen_devices[devicename] = True
+        except PyiCloudNoDevicesException:
+            _LOGGER.error('No iCloud Devices found!')
 
     def lost_iphone(self, devicename):
         """Call the lost iphone function if the device is found."""
-        if self.api is not None:
-            self.api.authenticate()
+        if self.api is None:
+            return
+
+        self.api.authenticate()
+
+        for device in self.api.devices:
+            if devicename is None or device == self.devices[devicename]:
+                device.play_sound()
+
+    def update_icloud(self, devicename=None):
+        """Authenticate against iCloud and scan for devices."""
+        from pyicloud.exceptions import PyiCloudNoDevicesException
+
+        if self.api is None:
+            return
+
+        try:
             if devicename is not None:
                 if devicename in self.devices:
-                    self.devices[devicename].lost_iphone()
+                    self.devices[devicename].update_icloud()
                 else:
                     _LOGGER.error("devicename %s unknown for account %s",
                                   devicename, self._attrs[ATTR_ACCOUNTNAME])
             else:
                 for device in self.devices:
-                    self.devices[device].lost_iphone()
-
-    def update_icloud(self, devicename=None):
-        """Authenticate against iCloud and scan for devices."""
-        if self.api is not None:
-            from pyicloud.exceptions import PyiCloudNoDevicesException
-            try:
-                # The session timeouts if we are not using it so we
-                # have to re-authenticate. This will send an email.
-                self.api.authenticate()
-                if devicename is not None:
-                    if devicename in self.devices:
-                        self.devices[devicename].update_icloud()
-                    else:
-                        _LOGGER.error("devicename %s unknown for account %s",
-                                      devicename,
-                                      self._attrs[ATTR_ACCOUNTNAME])
-                else:
-                    for device in self.devices:
-                        self.devices[device].update_icloud()
-            except PyiCloudNoDevicesException:
-                _LOGGER.error('No iCloud Devices found!')
+                    self.devices[device].update_icloud()
+        except PyiCloudNoDevicesException:
+            _LOGGER.error('No iCloud Devices found!')
 
     def setinterval(self, interval=None, devicename=None):
         """Set the interval of the given devices."""
-        if devicename is None:
-            for device in self.devices:
-                self.devices[device].setinterval(interval)
-                self.devices[device].update_icloud()
-        elif devicename in self.devices:
-            self.devices[devicename].setinterval(interval)
-            self.devices[devicename].update_icloud()
+        devs = [devicename] if devicename else self.devices
+        for device in devs:
+            devid = DOMAIN + '.' + device
+            devicestate = self.hass.states.get(devid)
+            if interval is not None:
+                if devicestate is not None:
+                    self._overridestates[device] = active_zone(
+                        self.hass,
+                        float(devicestate.attributes.get('latitude', 0)),
+                        float(devicestate.attributes.get('longitude', 0)))
+                    if self._overridestates[device] is None:
+                        self._overridestates[device] = 'away'
+                self._intervals[device] = interval
+            else:
+                self._overridestates[device] = None
+            self.update_device(device)

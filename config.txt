@@ -1,23 +1,10 @@
-icloud:
-  bart:
+device_tracker:
+  - platfrom: icloud
+    account_name: bart
     username: <my username>
     password: <my password>
-    manual_update:
-      - '7:45'
-      - '8:00'
-      - '17:45'
-      - '18:00'
-    ignored_devices:
-      - iphonevanbvb
-      - ipodvanbart
     googletraveltime:
       iphonebart: sensor.bart_naar_huis
-    events: True
-  sharon:
+  - platfrom: icloud
     username: <gf's username>
     password: <gf's password>
-    manual_update:
-      - '8:45'
-      - '9:00'
-      - '18:45'
-      - '19:00'
