@@ -1,10 +1,10 @@
 device_tracker:
-  - platfrom: icloud
+  - platform: icloud
     account_name: bart
     username: <my username>
     password: <my password>
     googletraveltime:
       iphonebart: sensor.bart_naar_huis
-  - platfrom: icloud
+  - platform: icloud
     username: <gf's username>
     password: <gf's password>
