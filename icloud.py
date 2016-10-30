@@ -64,17 +64,17 @@ DEVICESTATUSCODES = {'200': 'online', '201': 'offline', '203': 'pending',
                      '204': 'unregistered'}
 
 SERVICE_SCHEMA = vol.Schema({
-    vol.Optional(ATTR_ACCOUNTNAME): vol.All(cv.ensure_list, [cv.string]),
-    vol.Optional(ATTR_DEVICENAME): cv.string,
+    vol.Optional(ATTR_ACCOUNTNAME): vol.All(cv.ensure_list, [cv.slugify]),
+    vol.Optional(ATTR_DEVICENAME): cv.slugify,
     vol.Optional(ATTR_INTERVAL): cv.positive_int,
 })
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_USERNAME): cv.string,
     vol.Required(CONF_PASSWORD): cv.string,
-    vol.Optional(ATTR_ACCOUNTNAME): cv.slug,
+    vol.Optional(ATTR_ACCOUNTNAME): cv.slugify,
     vol.Optional(CONF_GMTT, default={}):
-        vol.Schema({cv.slug: cv.entity_id}),
+        vol.Schema({cv.slugify: cv.entity_id}),
 })
 
 
@@ -83,7 +83,7 @@ def setup_scanner(hass, config: dict, see):
     # pylint: disable=too-many-locals
     username = config.get(CONF_USERNAME)
     password = config.get(CONF_PASSWORD)
-    account = config.get(CONF_ACCOUNTNAME, slugify(username))
+    account = config.get(CONF_ACCOUNTNAME, slugify(username.partition('@')[0]))
 
     googletraveltime = config.get(CONF_GMTT)
 
@@ -298,9 +298,10 @@ class Icloud(object):  # pylint: disable=too-many-instance-attributes
                      currentminutes % interval in [2, 4])):
                 self.update_device(devicename)
 
-    def determine_interval(self, devicename, latitude, longitude, battery):
+    def determine_interval(self, devicename, latitude, longitude, battery,
+                           gmtt_duration):
         """Calculate new interval."""
-        # pylint: disable=too-many-branches
+        # pylint: disable=too-many-branches,too-many-arguments
         distancefromhome = None
         zone_state = self.hass.states.get('zone.home')
         zone_state_lat = zone_state.attributes['latitude']
@@ -326,13 +327,10 @@ class Icloud(object):  # pylint: disable=too-many-instance-attributes
         if distancefromhome is None:
             return
         if distancefromhome > 100:
-            self._intervals[devicename] = round(distancefromhome, 0)
-            gtt = self.googletraveltime.get(devicename)
-            if gtt is not None:
-                gttstate = self.hass.states.get(gtt)
-                if gttstate is not None:
-                    self._intervals[devicename] = round(
-                        float(gttstate.state) - 10, 0)
+            self._intervals[devicename] = distancefromhome
+            if gmtt_duration is not None:
+                self._intervals[devicename] = float(gmtt_duration) - 10
+            self._intervals[devicename] = round(self._intervals[devicename], 0)
         elif distancefromhome > 50:
             self._intervals[devicename] = 30
         elif distancefromhome > 25:
@@ -355,15 +353,13 @@ class Icloud(object):  # pylint: disable=too-many-instance-attributes
             return
         attrs = {}
         kwargs = {}
-        gtt = self.googletraveltime.get(devicename)
-        if gtt is not None:
+        try:
+            gtt = self.googletraveltime.get(devicename)
             gttstate = self.hass.states.get(gtt)
-            if gttstate is not None:
-                if 'origin_addresses' in gttstate.attributes:
-                    duration = gttstate.state
-                    origin = gttstate.attributes['origin_addresses']
-                    attrs[ATTR_GMTT_DURATION] = duration
-                    attrs[ATTR_GMTT_ORIGIN] = origin
+            attrs[ATTR_GMTT_DURATION] = gttstate.state
+            attrs[ATTR_GMTT_ORIGIN] = gttstate.attributes['origin_addresses']
+        except (AttributeError, KeyError):
+            pass
 
         if self.api is None:
             return
@@ -374,13 +370,10 @@ class Icloud(object):  # pylint: disable=too-many-instance-attributes
                     status = device.status(DEVICESTATUSSET)
                     dev_id = status['name'].replace(' ', '', 99)
                     dev_id = slugify(dev_id)
-                    devicestatuscode = status['deviceStatus']
                     attrs[ATTR_DEVICESTATUS] = DEVICESTATUSCODES.get(
-                        devicestatuscode, 'error')
-                    lowpowermode = status['lowPowerMode']
-                    attrs[ATTR_LOWPOWERMODE] = lowpowermode
-                    batterystatus = status['batteryStatus']
-                    attrs[ATTR_BATTERYSTATUS] = batterystatus
+                        status['deviceStatus'], 'error')
+                    attrs[ATTR_LOWPOWERMODE] = status['lowPowerMode']
+                    attrs[ATTR_BATTERYSTATUS] = status['batteryStatus']
                     attrs[ATTR_ACCOUNTNAME] = self.accountname
                     status = device.status(DEVICESTATUSSET)
                     battery = status.get('batteryLevel', 0) * 100
@@ -388,7 +381,8 @@ class Icloud(object):  # pylint: disable=too-many-instance-attributes
                     if location:
                         self.determine_interval(
                             devicename, location['latitude'],
-                            location['longitude'], battery)
+                            location['longitude'], battery,
+                            attrs.get(ATTR_GMTT_DURATION))
                         interval = self._intervals.get(devicename, 1)
                         attrs[ATTR_INTERVAL] = interval
                         accuracy = location['horizontalAccuracy']
