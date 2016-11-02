@@ -3,8 +3,6 @@ device_tracker:
     account_name: bart
     username: <my username>
     password: <my password>
-    googletraveltime:
-      iphonebart: sensor.bart_naar_huis
   - platform: icloud
     username: <gf's username>
     password: <gf's password>
