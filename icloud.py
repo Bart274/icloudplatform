@@ -149,6 +149,7 @@ class Icloud(object):
 
         self._trusted_device = None
         self._verification_code = None
+        self._code_sent = False
 
         self._attrs = {}
         self._attrs[ATTR_ACCOUNTNAME] = name
@@ -180,6 +181,8 @@ class Icloud(object):
             self.api = None
             _LOGGER.error('Error logging into iCloud Service: %s', error)
             return
+
+        self._code_sent = False
 
         try:
             self.devices = {}
@@ -266,7 +269,7 @@ class Icloud(object):
         if self.api is None:
             return
 
-        if self.api.requires_2fa:
+        if self.api.requires_2fa and not self._code_sent:
             if self._trusted_device is None:
                 self.icloud_need_trusted_device()
                 return
@@ -281,6 +284,7 @@ class Icloud(object):
             if self.api.validate_verification_code(
                     self._trusted_device, self._verification_code):
                 self._verification_code = None
+                self._code_sent = True
 
         self.api.authenticate()
 
