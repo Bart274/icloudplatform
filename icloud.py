@@ -282,7 +282,7 @@ class Icloud(object):
                 return
 
             self.api.validate_verification_code(
-                self._trusted_device, self._verification_code):
+                self._trusted_device, self._verification_code)
             self._verification_code = None
             self._code_sent = True
 
