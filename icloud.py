@@ -276,7 +276,7 @@ class Icloud(object):
                         return
 
                     if self._verification_code is None:
-                        self.icloud_need_verification_code()
+                        self.icloud_need_verification_code(1)
                         return
 
                     if self._verification_code == 'waiting':
@@ -292,7 +292,7 @@ class Icloud(object):
                     _LOGGER.error('ICLOUDDEBUG: code is not sent yet')
                     if self._verification_code is None:
                         _LOGGER.error('ICLOUDDEBUG: request code')
-                        self.icloud_need_verification_code()
+                        self.icloud_need_verification_code(2)
                         return
 
                     if self._verification_code == 'waiting':
