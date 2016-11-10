@@ -281,10 +281,10 @@ class Icloud(object):
             if self._verification_code == 'waiting':
                 return
 
-            if self.api.validate_verification_code(
-                    self._trusted_device, self._verification_code):
-                self._verification_code = None
-                self._code_sent = True
+            self.api.validate_verification_code(
+                self._trusted_device, self._verification_code):
+            self._verification_code = None
+            self._code_sent = True
 
         self.api.authenticate()
 
