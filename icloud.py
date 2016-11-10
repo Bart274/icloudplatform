@@ -146,6 +146,7 @@ class Icloud(object):
         self._overridestates = {}
         self._intervals = {}
         self.see = see
+        self.codesent = False
 
         self._trusted_device = None
         self._verification_code = None
@@ -234,13 +235,15 @@ class Icloud(object):
             configurator = get_component('configurator')
             configurator.request_done(request_id)
 
-    def icloud_need_verification_code(self):
+    def icloud_need_verification_code(self, version):
         """We need a verification code."""
+        _LOGGER.error('ICLOUDDEBUG: create configurator')
         configurator = get_component('configurator')
         if self.accountname in _CONFIGURING:
             return
 
-        if self.api.send_verification_code(self._trusted_device):
+        if (version == 2 or
+                self.api.send_verification_code(self._trusted_device)):
             self._verification_code = 'waiting'
 
         _CONFIGURING[self.accountname] = configurator.request_config(
@@ -262,25 +265,52 @@ class Icloud(object):
         if self.api is None:
             return
 
+        _LOGGER.error('ICLOUDDEBUG: check if api needs 2FA')
         if self.api.requires_2fa:
+            _LOGGER.error('ICLOUDDEBUG: api needs 2FA')
+            if self.api.version_2fa == 1:
+                _LOGGER.error('ICLOUDDEBUG: api uses 2steps')
+                if not self.codesent:
+                    if self._trusted_device is None:
+                        self.icloud_need_trusted_device()
+                        return
+
+                    if self._verification_code is None:
+                        self.icloud_need_verification_code()
+                        return
+
+                    if self._verification_code == 'waiting':
+                        return
+
+                    if self.api.validate_verification_code(
+                            self._trusted_device, self._verification_code):
+                        self._verification_code = None
+                        self.codesent = True
+            else:
+                _LOGGER.error('ICLOUDDEBUG: api uses 2factor')
+                if not self.codesent:
+                    _LOGGER.error('ICLOUDDEBUG: code is not sent yet')
+                    if self._verification_code is None:
+                        _LOGGER.error('ICLOUDDEBUG: request code')
+                        self.icloud_need_verification_code()
+                        return
+
+                    if self._verification_code == 'waiting':
+                        _LOGGER.error('ICLOUDDEBUG: code is not entered yet')
+                        return
+
+                    if self.api.validate_verification_code(
+                            self._trusted_device, self._verification_code):
+                        _LOGGER.error('ICLOUDDEBUG: code is sent')
+                        self._verification_code = None
+                        self.codesent = True
+            
             try:
                 self.api.authenticate()
             except PyiCloud2FARequiredError:
-                if self._trusted_device is None:
-                    self.icloud_need_trusted_device()
-                    return
-
-                if self._verification_code is None:
-                    self.icloud_need_verification_code()
-                    return
-
-                if self._verification_code == 'waiting':
-                    return
-
-                if self.api.validate_verification_code(
-                        self._trusted_device, self._verification_code):
-                    self._verification_code = None
+                self.codesent = False
         else:
+            _LOGGER.error("ICLOUDDEBUG: api doesn't need 2FA")
             self.api.authenticate()
 
         currentminutes = dt_util.now().hour * 60 + dt_util.now().minute
@@ -330,6 +360,8 @@ class Icloud(object):
         """Update the device_tracker entity."""
         from pyicloud.exceptions import PyiCloudNoDevicesException
 
+        # An entity will not be created by see() when track=false in
+        # 'known_devices.yaml', but we need to see() it at least once
         entity = self.hass.states.get(ENTITY_ID_FORMAT.format(devicename))
         if entity is None and devicename in self.seen_devices:
             return
