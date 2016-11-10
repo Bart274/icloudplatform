@@ -212,6 +212,10 @@ class Icloud(object):
 
         devicesstring = ''
         devices = self.api.trusted_devices
+        if len(self.api.trusted_devices) == 1:
+            self._trusted_device = self.api.trusted_devices[0]
+            return
+
         for i, device in enumerate(devices):
             devicesstring += "{}: {};".format(i, device.get('deviceName'))
 
@@ -263,25 +267,22 @@ class Icloud(object):
             return
 
         if self.api.requires_2fa:
-            try:
-                self.api.authenticate()
-            except PyiCloud2FARequiredError:
-                if self._trusted_device is None:
-                    self.icloud_need_trusted_device()
-                    return
+            if self._trusted_device is None:
+                self.icloud_need_trusted_device()
+                return
 
-                if self._verification_code is None:
-                    self.icloud_need_verification_code()
-                    return
+            if self._verification_code is None:
+                self.icloud_need_verification_code()
+                return
 
-                if self._verification_code == 'waiting':
-                    return
+            if self._verification_code == 'waiting':
+                return
 
-                if self.api.validate_verification_code(
-                        self._trusted_device, self._verification_code):
-                    self._verification_code = None
-        else:
-            self.api.authenticate()
+            if self.api.validate_verification_code(
+                    self._trusted_device, self._verification_code):
+                self._verification_code = None
+
+        self.api.authenticate()
 
         currentminutes = dt_util.now().hour * 60 + dt_util.now().minute
         for devicename in self.devices:
